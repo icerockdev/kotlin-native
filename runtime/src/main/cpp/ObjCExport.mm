@@ -17,6 +17,7 @@
 #import "Types.h"
 #import "Memory.h"
 #include "Natives.h"
+#include "ObjCInterop.h"
 
 #if KONAN_OBJC_INTEROP
 
@@ -976,12 +977,14 @@ static void addVirtualAdapters(Class clazz, const ObjCTypeAdapter* typeAdapter) 
 static Class createClass(const TypeInfo* typeInfo, Class superClass) {
   RuntimeAssert(typeInfo->superType_ != nullptr, "");
 
-  char classNameBuffer[64];
-  snprintf(classNameBuffer, sizeof(classNameBuffer), "kobjcc%d", anonymousClassNextId++);
-  const char* className = classNameBuffer;
+  int classIndex = (anonymousClassNextId++);
+  RuntimeCheck(Kotlin_ObjCInterop_uniquePrefix != nullptr, "unique prefix is not initialized");
+  KStdString className = Kotlin_ObjCInterop_uniquePrefix;
+  className += "_kobjcc";
+  className += std::to_string(classIndex);
 
-  Class result = objc_allocateClassPair(superClass, className, 0);
-  RuntimeAssert(result != nullptr, "");
+  Class result = objc_allocateClassPair(superClass, className.c_str(), 0);
+  RuntimeCheck(result != nullptr, "");
 
   // TODO: optimize by adding virtual adapters only for overridden methods.
 
