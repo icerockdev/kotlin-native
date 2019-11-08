@@ -95,8 +95,8 @@ allprojects {
 
 void setupHostAndTarget() {
     ext.hostName = platformManager.hostName
-    ext.targetList = platformManager.enabled.collect { it.visibleName } as List
-    ext.konanTargetList = platformManager.enabled as List
+    ext.targetList =  platformManager.enabledMy.collect { it.visibleName } as List
+    ext.konanTargetList = platformManager.enabledMy as List
 }
 
 void setupClang(Project project) {

@@ -44,5 +44,7 @@ class PlatformManager(distribution: Distribution = Distribution(), experimental:
     val hostPlatform = platforms.getValue(host)
 
     fun loader(target: KonanTarget) = loaders.getValue(target)
+
+    val enabledMy: List<KonanTarget> = listOf(KonanTarget.MACOS_X64, KonanTarget.IOS_X64)
 }
 
