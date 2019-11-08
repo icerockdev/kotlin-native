@@ -63,6 +63,8 @@ static_assert(sizeof(ContainerHeader) % kObjectAlignment == 0, "sizeof(Container
 #define MEMORY_LOG(...)
 #endif
 
+#define MEMORY_LOG_ICE(...) konan::consolePrintf(__VA_ARGS__);
+
 #if TRACE_GC
 #define GC_LOG(...) konan::consolePrintf(__VA_ARGS__);
 #else
@@ -738,6 +740,50 @@ void processFinalizerQueue(MemoryState* state) {
   RuntimeAssert(state->finalizerQueueSize == 0, "Queue must be empty here");
 }
 
+const char* colorNames[] = {"BLACK", "GRAY", "WHITE", "PURPLE", "GREEN", "ORANGE", "RED"};
+
+void dumpObject(ObjHeader* ref, int indent) {
+  for (int i = 0; i < indent; i++) MEMORY_LOG_ICE(" ");
+  auto* typeInfo = ref->type_info();
+  auto* packageName =
+    typeInfo->packageName_ != nullptr ? CreateCStringFromString(typeInfo->packageName_) : nullptr;
+  auto* relativeName =
+    typeInfo->relativeName_ != nullptr ? CreateCStringFromString(typeInfo->relativeName_) : nullptr;
+  MEMORY_LOG_ICE("%p %s.%s\n", ref,
+    packageName ? packageName : "<unknown>", relativeName ? relativeName : "<unknown>");
+
+  MEMORY_LOG_ICE("%s\n", CreateCStringFromString(ref))
+
+  if (packageName) konan::free(packageName);
+  if (relativeName) konan::free(relativeName);
+}
+
+void dumpContainerContent(ContainerHeader* container) {
+  if (container->refCount() < 0) {
+    MEMORY_LOG_ICE("%p has negative RC %d, likely a memory bug\n", container, container->refCount())
+    return;
+  }
+  if (isAggregatingFrozenContainer(container)) {
+    MEMORY_LOG_ICE("%s aggregating container %p with %d objects rc=%d\n",
+               colorNames[container->color()], container, container->objectCount(), container->refCount());
+    ContainerHeader** subContainer = reinterpret_cast<ContainerHeader**>(container + 1);
+    for (int i = 0; i < container->objectCount(); ++i) {
+      ContainerHeader* sub = *subContainer++;
+      MEMORY_LOG_ICE("    container %p\n ", sub);
+      dumpContainerContent(sub);
+    }
+  } else {
+    MEMORY_LOG_ICE("%s regular %s%scontainer %p with %d objects rc=%d\n",
+               colorNames[container->color()],
+               container->frozen() ? "frozen " : "",
+               container->stack() ? "stack " : "",
+               container, container->objectCount(),
+               container->refCount());
+    ObjHeader* obj = reinterpret_cast<ObjHeader*>(container + 1);
+    dumpObject(obj, 4);
+  }
+}
+
 bool hasExternalRefs(ContainerHeader* start, ContainerHeaderSet* visited) {
   ContainerHeaderDeque toVisit;
   toVisit.push_back(start);
@@ -745,10 +791,16 @@ bool hasExternalRefs(ContainerHeader* start, ContainerHeaderSet* visited) {
     auto* container = toVisit.front();
     toVisit.pop_front();
     visited->insert(container);
+
+    MEMORY_LOG_ICE("==> container %p\n", container)
+    dumpContainerContent(container);
+    MEMORY_LOG_ICE("<==\n")
+
     if (container->refCount() > 0) {
-      MEMORY_LOG("container %p with rc %d blocks transfer\n", container, container->refCount())
+      MEMORY_LOG_ICE("container %p with rc %d blocks transfer\n", container, container->refCount())
       return true;
     }
+    MEMORY_LOG_ICE("container %p allow transfer\n", container)
     traverseContainerReferredObjects(container, [&toVisit, visited](ObjHeader* ref) {
         auto* child = ref->container();
         if (!isShareable(child) && (visited->count(child) == 0)) {
@@ -756,6 +808,7 @@ bool hasExternalRefs(ContainerHeader* start, ContainerHeaderSet* visited) {
         }
      });
   }
+  MEMORY_LOG_ICE("container %p has no external refs\n", start)
   return false;
 }
 
@@ -2001,7 +2054,7 @@ OBJ_GETTER(adoptStablePointer, KNativePtr pointer) {
 
 bool clearSubgraphReferences(ObjHeader* root, bool checked) {
 #if USE_GC
-  MEMORY_LOG("ClearSubgraphReferences %p\n", root)
+  MEMORY_LOG_ICE("ClearSubgraphReferences %p\n", root)
   if (root == nullptr) return true;
   auto state = memoryState;
   auto* container = root->container();
@@ -2016,6 +2069,7 @@ bool clearSubgraphReferences(ObjHeader* root, bool checked) {
   if (!checked) {
     hasExternalRefs(container, &visited);
   } else {
+    MEMORY_LOG_ICE("check\n")
     // Now decrement RC of elements in toRelease set for reachibility analysis.
     for (auto it = state->toRelease->begin(); it != state->toRelease->end(); ++it) {
       auto released = *it;
@@ -2036,6 +2090,7 @@ bool clearSubgraphReferences(ObjHeader* root, bool checked) {
        }
     }
     if (bad) {
+      MEMORY_LOG_ICE("has external\n")
       return false;
     }
   }
@@ -2045,7 +2100,7 @@ bool clearSubgraphReferences(ObjHeader* root, bool checked) {
   for (auto it = state->toFree->begin(); it != state->toFree->end(); ++it) {
     auto container = *it;
     if (visited.count(container) != 0) {
-      MEMORY_LOG("removing %p from the toFree list\n", container)
+      MEMORY_LOG_ICE("removing %p from the toFree list\n", container)
       container->resetBuffered();
       container->setColorAssertIfGreen(CONTAINER_TAG_GC_BLACK);
       *it = markAsRemoved(container);
@@ -2054,7 +2109,7 @@ bool clearSubgraphReferences(ObjHeader* root, bool checked) {
   for (auto it = state->toRelease->begin(); it != state->toRelease->end(); ++it) {
     auto container = *it;
     if (!isMarkedAsRemoved(container) && visited.count(container) != 0) {
-      MEMORY_LOG("removing %p from the toRelease list\n", container)
+      MEMORY_LOG_ICE("removing %p from the toRelease list\n", container)
       container->decRefCount<false>();
       *it = markAsRemoved(container);
     }
@@ -2068,6 +2123,7 @@ bool clearSubgraphReferences(ObjHeader* root, bool checked) {
 #endif
 
 #endif  // USE_GC
+  MEMORY_LOG_ICE("cleared")
   return true;
 }
 
